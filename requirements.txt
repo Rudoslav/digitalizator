@@ -1,0 +1,5 @@
+PyQt6>=6.7
+img2pdf>=0.6
+pikepdf>=10
+fpdf2>=2.8
+Pillow>=10
