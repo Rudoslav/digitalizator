@@ -37,6 +37,9 @@ Bez PERO appka ponúkne len Tesseract. Modely PERO sú trénované na české no
 `bench/bench.py` porovná enginy na stranách s ručne opraveným textom (chybovosť na znaky a zachovanie diakritiky):
 `python bench/bench.py priecinok --engines tesseract,pero`
 
+## Licencia
+MIT (c) 2026 Rudoslav. Pri použití alebo úprave treba zachovať toto autorstvo a text licencie. Licencie použitých programov: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 ## Poznámky
 - PDF/A vzniká cez Ghostscript (AGPL); formálne overenie validátorom (veraPDF) zatiaľ nebolo urobené.
 - Font v `desktop/fonts/` (Liberation Sans, licencia SIL OFL) slúži len na neviditeľnú textovú vrstvu.

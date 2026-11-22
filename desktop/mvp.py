@@ -8,12 +8,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, QThread, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap
 
 import pipeline
+import tools
 from PIL import Image, ImageOps
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
@@ -53,7 +54,7 @@ def crop_jpeg(data: bytes, cfg: dict, mode: str) -> bytes:
 
 
 def adb(*a):
-    return subprocess.run(["adb", *a], capture_output=True, text=True, timeout=20)
+    return subprocess.run([tools.adb(), *a], capture_output=True, text=True, timeout=20, **tools.NOWIN)
 
 
 def connect_phone() -> str | None:
@@ -70,8 +71,8 @@ def connect_phone() -> str | None:
 
 
 class Feed(QThread):
-    frame = pyqtSignal(QImage)
-    lost = pyqtSignal()
+    frame = Signal(QImage)
+    lost = Signal()
 
     def run(self):
         while not self.isInterruptionRequested():
@@ -99,9 +100,9 @@ class Feed(QThread):
 
 
 class PdfJob(QThread):
-    done = pyqtSignal(str)
-    failed = pyqtSignal(str)
-    progress = pyqtSignal(int)
+    done = Signal(str)
+    failed = Signal(str)
+    progress = Signal(int)
 
     def __init__(self, images, out, engine):
         super().__init__()
@@ -117,8 +118,8 @@ class PdfJob(QThread):
 
 
 class Shot(QThread):
-    done = pyqtSignal(str)
-    failed = pyqtSignal(str)
+    done = Signal(str)
+    failed = Signal(str)
 
     def __init__(self, path: Path, crop=None):
         super().__init__()
@@ -399,7 +400,42 @@ class Window(QWidget):
         super().closeEvent(e)
 
 
+def selftest(report: Path) -> int:
+    """`--selftest súbor`: overí, že sú k dispozícii programy a že sa dá vytvoriť PDF/A s OCR.
+    Používa sa v automatickom builde pre Windows."""
+    import tempfile
+    from PIL import Image, ImageDraw, ImageFont
+    lines, ok = [], True
+
+    def check(name, cond, info=""):
+        nonlocal ok
+        ok &= bool(cond)
+        lines.append(f"{'OK  ' if cond else 'CHYBA'} {name} {info}")
+
+    check("tesseract", Path(tools.tesseract()).exists() or tools.tesseract() == "tesseract", tools.tesseract())
+    check("ghostscript", tools.gs(), str(tools.gs()))
+    check("font", pipeline.FONT.exists(), str(pipeline.FONT))
+    check("adb", Path(tools.adb()).exists() or tools.adb() == "adb", tools.adb())
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            img = Image.new("RGB", (1240, 1754), "white")
+            ImageDraw.Draw(img).text((100, 200), "Slovensky archiv 123", fill="black",
+                                     font=ImageFont.load_default(size=56))
+            src = Path(d) / "0001.jpg"
+            img.save(src, quality=95)
+            out = Path(d) / "t.pdf"
+            used = pipeline.build_pdf([src], out, engine="tesseract")
+            check("pdf", out.exists() and out.stat().st_size > 0, used)
+            check("pdf/a", "PDF/A" in used and "bez PDF/A" not in used, used)
+    except Exception as e:  # noqa: BLE001
+        check("pdf", False, repr(e))
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--selftest":
+        sys.exit(selftest(Path(sys.argv[2])))
     app = QApplication(sys.argv)
     err = connect_phone()
     if err:

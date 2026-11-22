@@ -1,0 +1,86 @@
+name: windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag vydania, ku ktorému sa pripojí inštalátor (napr. v0.2.0); prázdne = len artefakt"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python závislosti
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Zbaliť appku (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --windowed --name Digitalizator --paths desktop
+          --add-data "desktop/fonts;fonts" --collect-all pikepdf desktop/mvp.py
+
+      - name: Pribaliť Tesseract, Ghostscript a adb
+        shell: pwsh
+        run: |
+          choco install tesseract ghostscript innosetup -y --no-progress
+          $t = "dist/Digitalizator/tools"
+          New-Item -ItemType Directory -Force $t | Out-Null
+
+          # Tesseract + dáta pre sk, cs, de, hu, la (rýchle modely)
+          Copy-Item "C:\Program Files\Tesseract-OCR" "$t\tesseract" -Recurse
+          foreach ($l in "slk","ces","deu","hun","lat") {
+            Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$l.traineddata" -OutFile "$t\tesseract\tessdata\$l.traineddata"
+          }
+
+          # Ghostscript (len vedľajší program na PDF/A)
+          New-Item -ItemType Directory -Force "$t\gs" | Out-Null
+          $gsdir = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name | Select-Object -Last 1
+          Copy-Item $gsdir.FullName "$t\gs\$($gsdir.Name)" -Recurse
+
+          # adb
+          Invoke-WebRequest "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile pt.zip
+          Expand-Archive pt.zip -DestinationPath ptx
+          New-Item -ItemType Directory -Force "$t\adb" | Out-Null
+          Copy-Item ptx\platform-tools\adb.exe, ptx\platform-tools\AdbWinApi.dll, ptx\platform-tools\AdbWinUsbApi.dll "$t\adb"
+          Get-ChildItem $t | Format-Table Name
+
+      - name: Self-test (programy + PDF/A s OCR)
+        shell: pwsh
+        run: |
+          $p = Start-Process "dist\Digitalizator\Digitalizator.exe" -ArgumentList "--selftest","selftest.txt" -Wait -PassThru
+          if (Test-Path selftest.txt) { Get-Content selftest.txt }
+          if ($p.ExitCode -ne 0) { throw "Self-test zlyhal (exit $($p.ExitCode))" }
+
+      - name: Inštalátor (Inno Setup)
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like "refs/tags/v*") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0-dev" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$v" installer\digitalizator.iss
+          Get-ChildItem out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Digitalizator-Setup
+          path: out/*.exe
+
+      - name: Pripojiť k vydaniu
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = if ("${{ inputs.release_tag }}" -ne "") { "${{ inputs.release_tag }}" } else { "${{ github.ref_name }}" }
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title $tag --notes "Windows inštalátor (zostavené automaticky)." }
+          gh release upload $tag (Get-ChildItem out\*.exe).FullName --clobber

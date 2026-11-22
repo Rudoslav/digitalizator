@@ -13,11 +13,12 @@ import fpdf
 import img2pdf
 import pikepdf
 
+import tools
+
 OCR_LANGS = "slk+ces+deu+hun+eng"  # len pre Tesseract
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-FONT = HERE / "fonts" / "LiberationSans-Regular.ttf"  # má všetku potrebnú diakritiku
-PERO_PY = ROOT / ".venv-pero" / "bin" / "python"
+ROOT = tools.app_dir()
+FONT = tools.resource_dir() / "fonts" / "LiberationSans-Regular.ttf"  # má všetku potrebnú diakritiku
+PERO_PY = ROOT / ".venv-pero" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 PERO_SCRIPT = ROOT / "vendor" / "pero-ocr" / "user_scripts" / "parse_folder.py"
 PERO_CFGS = sorted((ROOT / "vendor" / "pero-models-dl" / "extracted").glob("*/config_cpu.ini"))
 
@@ -80,7 +81,7 @@ def _build_pero(images: list[Path], out_pdf: Path, progress) -> None:
         proc = subprocess.Popen(
             [str(PERO_PY), str(PERO_SCRIPT), "-c", str(PERO_CFGS[0]), "-i", str(inp),
              "--output-alto-path", str(out), "--word-splitters", " ", "--device", "cpu"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **tools.NOWIN,
         )
         tail: list[str] = []
         for line in proc.stdout:
@@ -152,8 +153,9 @@ def _build_tesseract(images: list[Path], out_pdf: Path, langs: str, progress) ->
         def ocr(i: int, img: Path) -> Path:
             base = tmp / f"p{i:05d}"
             proc = subprocess.run(
-                ["tesseract", str(img), str(base), "-l", langs, "alto"],
-                capture_output=True, text=True, env={**os.environ, "OMP_THREAD_LIMIT": "1"},
+                [tools.tesseract(), str(img), str(base), "-l", langs, "alto"],
+                capture_output=True, text=True, **tools.NOWIN,
+                env={**os.environ, "OMP_THREAD_LIMIT": "1", **tools.tessdata_env()},
             )
             if proc.returncode != 0 or not base.with_suffix(".xml").exists():
                 raise RuntimeError(f"Strana {i + 1}: " + (proc.stderr.strip()[-200:] or "OCR zlyhalo."))
@@ -173,7 +175,7 @@ def _build_tesseract(images: list[Path], out_pdf: Path, langs: str, progress) ->
 
 # -------------------------------------------------------------- PDF/A
 def _gs_exe() -> str | None:
-    return shutil.which("gs") or shutil.which("gswin64c") or shutil.which("gswin32c")
+    return tools.gs()
 
 
 def _gs_icc(gs: str) -> Path | None:
@@ -214,7 +216,7 @@ def _to_pdfa(pdf: Path) -> str:
              "-dQUIET", "-sDEVICE=pdfwrite", "-sColorConversionStrategy=RGB",
              "-sProcessColorModel=DeviceRGB", "-dPassThroughJPEGImages=true",
              f"-sOutputFile={out}", str(tmp / "PDFA_def.ps"), str(pdf)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, **tools.NOWIN,
         )
         if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
             return "bez PDF/A: " + (r.stderr.strip()[-100:] or "Ghostscript zlyhal")
