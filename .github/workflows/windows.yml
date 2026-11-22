@@ -65,7 +65,9 @@ jobs:
       - name: Inštalátor (Inno Setup)
         shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF -like "refs/tags/v*") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0-dev" }
+          $v = "0.0.0-dev"
+          if ($env:GITHUB_REF -like "refs/tags/v*") { $v = $env:GITHUB_REF_NAME.TrimStart("v") }
+          elseif ("${{ inputs.release_tag }}" -ne "") { $v = "${{ inputs.release_tag }}".TrimStart("v") }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$v" installer\digitalizator.iss
           Get-ChildItem out
 
