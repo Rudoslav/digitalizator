@@ -117,6 +117,62 @@ class PdfJob(QThread):
             self.failed.emit(str(e))
 
 
+class PeroInstall(QThread):
+    progress = Signal(str, int, int)
+    done = Signal()
+    failed = Signal(str)
+
+    def run(self):
+        try:
+            import pero_pack
+            pero_pack.install(lambda stage, d, t: self.progress.emit(stage, d, t))
+            self.done.emit()
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
+def install_pero(gui: bool = True) -> int:
+    """`--install-pero`: stiahne a rozbalí PERO OCR. Bez `--silent` ukáže okno s priebehom."""
+    import pero_pack
+    if not gui:
+        try:
+            pero_pack.install(lambda s, d, t: print(f"{s} {d}/{t}", file=sys.stderr) if d == t else None)
+            return 0
+        except Exception as e:  # noqa: BLE001
+            print("CHYBA:", e, file=sys.stderr)
+            return 1
+    from PySide6.QtWidgets import QProgressDialog
+    app = QApplication(sys.argv)
+    dlg = QProgressDialog("Sťahujem PERO OCR…", None, 0, 100)
+    dlg.setWindowTitle("Digitalizátor – PERO OCR")
+    dlg.setMinimumWidth(420)
+    dlg.setMinimumDuration(0)
+    dlg.setAutoClose(False)
+    dlg.setAutoReset(False)
+    dlg.show()
+    result = {"code": 0}
+
+    def on_progress(stage, done, total):
+        dlg.setLabelText(f"{stage} PERO OCR… " + (f"{done / 1e6:.0f} z {total / 1e6:.0f} MB" if stage == "Sťahujem" and total else ""))
+        dlg.setValue(int(100 * done / total) if total else 0)
+
+    def on_failed(msg):
+        result["code"] = 1
+        dlg.close()
+        QMessageBox.warning(None, "Digitalizátor", "PERO OCR sa nepodarilo stiahnuť, appka bude používať Tesseract.\n"
+                            "Skúste to neskôr cez Štart → Doinštalovať PERO OCR.\n\n" + msg)
+        app.quit()
+
+    worker = PeroInstall()
+    worker.progress.connect(on_progress)
+    worker.done.connect(lambda: (dlg.close(), app.quit()))
+    worker.failed.connect(on_failed)
+    worker.start()
+    app.exec()
+    worker.wait()
+    return result["code"]
+
+
 class Shot(QThread):
     done = Signal(str)
     failed = Signal(str)
@@ -400,7 +456,7 @@ class Window(QWidget):
         super().closeEvent(e)
 
 
-def selftest(report: Path) -> int:
+def selftest(report: Path, require_pero: bool = False) -> int:
     """`--selftest súbor`: overí, že sú k dispozícii programy a že sa dá vytvoriť PDF/A s OCR.
     Používa sa v automatickom builde pre Windows."""
     import tempfile
@@ -427,6 +483,9 @@ def selftest(report: Path) -> int:
             used = pipeline.build_pdf([src], out, engine="tesseract")
             check("pdf", out.exists() and out.stat().st_size > 0, used)
             check("pdf/a", "PDF/A" in used and "bez PDF/A" not in used, used)
+            if require_pero:
+                used = pipeline.build_pdf([src], Path(d) / "p.pdf", engine="pero")
+                check("pero", used.startswith("PERO"), used)
     except Exception as e:  # noqa: BLE001
         check("pdf", False, repr(e))
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -435,7 +494,9 @@ def selftest(report: Path) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--selftest":
-        sys.exit(selftest(Path(sys.argv[2])))
+        sys.exit(selftest(Path(sys.argv[2]), "--require-pero" in sys.argv))
+    if "--install-pero" in sys.argv:
+        sys.exit(install_pero(gui="--silent" not in sys.argv))
     app = QApplication(sys.argv)
     err = connect_phone()
     if err:

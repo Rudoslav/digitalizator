@@ -69,6 +69,19 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$v" installer\digitalizator.iss
           Get-ChildItem out
 
+      - name: Test inštalácie (inštalátor + stiahnutie PERO + self-test s PERO)
+        if: inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem out\*.exe).FullName
+          Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=D:\inst","/TASKS=" -Wait
+          if (-not (Test-Path D:\inst\Digitalizator.exe)) { throw "Inštalácia zlyhala" }
+          $p = Start-Process "D:\inst\Digitalizator.exe" -ArgumentList "--install-pero","--silent" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Stiahnutie PERO zlyhalo (exit $($p.ExitCode))" }
+          $p = Start-Process "D:\inst\Digitalizator.exe" -ArgumentList "--selftest","st2.txt","--require-pero" -Wait -PassThru
+          Get-Content st2.txt
+          if ($p.ExitCode -ne 0) { throw "Self-test s PERO zlyhal" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Digitalizator-Setup

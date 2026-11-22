@@ -1,0 +1,80 @@
+name: pero-pack
+
+# Zostaví balík PERO OCR pre Windows (prenosný Python 3.11 + PyTorch CPU + PERO + modely)
+# a pripojí ho k vydaniu `pero-pack-v1`, odkiaľ ho stiahne inštalátor.
+on:
+  workflow_dispatch:
+
+jobs:
+  pack:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prenosný Python 3.11 s pip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory pack | Out-Null
+          Invoke-WebRequest "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile py.zip
+          Expand-Archive py.zip pack/python
+          $pth = "pack/python/python311._pth"
+          (Get-Content $pth) -replace '#import site', 'import site' | Set-Content $pth
+          Add-Content $pth "Lib\site-packages"
+          Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" -OutFile get-pip.py
+          pack/python/python.exe get-pip.py --no-warn-script-location
+
+      - name: Knižnice (PyTorch CPU a to, čo PERO potrebuje na rozpoznávanie)
+        shell: pwsh
+        run: |
+          pack/python/python.exe -m pip install --no-warn-script-location torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pack/python/python.exe -m pip install --no-warn-script-location "numpy~=1.24.2" opencv-python-headless safe-gpu numba lxml shapely scipy arabic-reshaper scikit-image scikit-learn
+
+      - name: PERO kód a modely
+        shell: pwsh
+        run: |
+          git clone --depth 1 -b develop https://github.com/DCGM/pero-ocr.git pero-src
+          pack/python/python.exe -m pip install --no-deps --no-warn-script-location ./pero-src
+          New-Item -ItemType Directory -Force pack/pero-ocr | Out-Null
+          Copy-Item pero-src/user_scripts pack/pero-ocr/user_scripts -Recurse
+          Copy-Item pero-src/LICENSE pack/pero-ocr/LICENSE
+          Invoke-WebRequest "https://nextcloud.fit.vutbr.cz/s/NtAbHTNkZFpapdJ/download" -OutFile models.zip
+          Expand-Archive models.zip pack/models
+          # na CPU sa používajú súbory *.pt.cpu, obyčajné *.pt (pre GPU) netreba
+          Get-ChildItem pack/models -Recurse -Filter "*.pt" | Remove-Item
+          Get-ChildItem pack -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+          Remove-Item "pack/python/Lib/site-packages/torch/include" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Skúška (PERO na testovacej strane)
+        shell: pwsh
+        run: |
+          pip install pillow
+          python -c "from PIL import Image, ImageDraw, ImageFont; im=Image.new('RGB',(1240,1754),'white'); ImageDraw.Draw(im).text((100,200),'Slovensky archiv 123',fill='black',font=ImageFont.load_default(size=56)); im.save('t.jpg')"
+          New-Item -ItemType Directory in, out | Out-Null
+          Copy-Item t.jpg in/
+          $cfg = (Get-ChildItem pack/models/*/config_cpu.ini).FullName
+          pack/python/python.exe pack/pero-ocr/user_scripts/parse_folder.py -c $cfg -i in --output-alto-path out --word-splitters " " --device cpu
+          if (-not (Test-Path out/t.xml)) { throw "PERO nevytvoril výstup" }
+          Get-Content out/t.xml -TotalCount 3 | Out-Null
+
+      - name: Zabaliť
+        shell: pwsh
+        run: |
+          7z a -tzip -mx=5 pero-pack-windows-x64.zip ./pack/*
+          $f = Get-Item pero-pack-windows-x64.zip
+          "{0:N0} MB" -f ($f.Length / 1MB)
+          if ($f.Length -gt 2000MB) { throw "Balík presahuje limit 2 GB pre súbor vo vydaní" }
+          $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+          "$h  pero-pack-windows-x64.zip" | Set-Content pero-pack-windows-x64.zip.sha256 -Encoding ascii
+
+      - name: Pripojiť k vydaniu pero-pack-v1
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view pero-pack-v1 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create pero-pack-v1 --title "PERO OCR balík pre Windows (v1)" --notes "Balík PERO OCR (Python 3.11, PyTorch CPU, PERO, modely pre európsku tlač). Sťahuje ho inštalátor Digitalizátora, nie je určený na ručné používanie. PERO: BSD-3-Clause, https://github.com/DCGM/pero-ocr"
+          }
+          gh release upload pero-pack-v1 pero-pack-windows-x64.zip pero-pack-windows-x64.zip.sha256 --clobber

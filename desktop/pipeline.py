@@ -18,13 +18,27 @@ import tools
 OCR_LANGS = "slk+ces+deu+hun+eng"  # len pre Tesseract
 ROOT = tools.app_dir()
 FONT = tools.resource_dir() / "fonts" / "LiberationSans-Regular.ttf"  # má všetku potrebnú diakritiku
-PERO_PY = ROOT / ".venv-pero" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-PERO_SCRIPT = ROOT / "vendor" / "pero-ocr" / "user_scripts" / "parse_folder.py"
-PERO_CFGS = sorted((ROOT / "vendor" / "pero-models-dl" / "extracted").glob("*/config_cpu.ini"))
+
+
+def _pero_paths():
+    """(python, parse_folder.py, config) – z vývojového prostredia alebo zo stiahnutého balíka `pero/`."""
+    candidates = [
+        (ROOT / ".venv-pero" / ("Scripts/python.exe" if os.name == "nt" else "bin/python"),
+         ROOT / "vendor" / "pero-ocr" / "user_scripts" / "parse_folder.py",
+         ROOT / "vendor" / "pero-models-dl" / "extracted"),
+        (ROOT / "pero" / "python" / "python.exe",
+         ROOT / "pero" / "pero-ocr" / "user_scripts" / "parse_folder.py",
+         ROOT / "pero" / "models"),
+    ]
+    for py, script, models in candidates:
+        cfgs = sorted(models.glob("*/config_cpu.ini"))
+        if py.exists() and script.exists() and cfgs:
+            return py, script, cfgs[0]
+    return None
 
 
 def pero_available() -> bool:
-    return PERO_PY.exists() and PERO_SCRIPT.exists() and bool(PERO_CFGS) and FONT.exists()
+    return _pero_paths() is not None and FONT.exists()
 
 
 def _raw_pdf(images: list[Path]) -> bytes:
@@ -63,8 +77,10 @@ def _build_text_pdf(images: list[Path], out_pdf: Path, ocr: bool = True, engine:
 
 # ---------------------------------------------------------------- PERO
 def _build_pero(images: list[Path], out_pdf: Path, progress) -> None:
-    if not pero_available():
+    paths = _pero_paths()
+    if paths is None:
         raise RuntimeError("PERO nie je nainštalovaný.")
+    pero_py, pero_script, pero_cfg = paths
     total = len(images)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -79,7 +95,7 @@ def _build_pero(images: list[Path], out_pdf: Path, progress) -> None:
                 shutil.copyfile(p, link)
 
         proc = subprocess.Popen(
-            [str(PERO_PY), str(PERO_SCRIPT), "-c", str(PERO_CFGS[0]), "-i", str(inp),
+            [str(pero_py), str(pero_script), "-c", str(pero_cfg), "-i", str(inp),
              "--output-alto-path", str(out), "--word-splitters", " ", "--device", "cpu"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **tools.NOWIN,
         )
