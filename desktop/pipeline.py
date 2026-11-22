@@ -212,14 +212,14 @@ def _to_pdfa(pdf: Path) -> str:
         )
         out = tmp / "pdfa.pdf"
         r = subprocess.run(
-            [gs, "-dPDFA=2", "-dPDFACompatibilityPolicy=1", "-dBATCH", "-dNOPAUSE", "-dNOOUTERSAVE",
+            [gs, f"--permit-file-read={icc}", "-dPDFA=2", "-dPDFACompatibilityPolicy=1", "-dBATCH", "-dNOPAUSE", "-dNOOUTERSAVE",
              "-dQUIET", "-sDEVICE=pdfwrite", "-sColorConversionStrategy=RGB",
              "-sProcessColorModel=DeviceRGB", "-dPassThroughJPEGImages=true",
              f"-sOutputFile={out}", str(tmp / "PDFA_def.ps"), str(pdf)],
             capture_output=True, text=True, **tools.NOWIN,
         )
         if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
-            return "bez PDF/A: " + (r.stderr.strip()[-100:] or "Ghostscript zlyhal")
+            return "bez PDF/A: " + ((r.stderr + r.stdout).strip()[-300:] or "Ghostscript zlyhal")
         shutil.copyfile(out, pdf)
     return "PDF/A"
 
