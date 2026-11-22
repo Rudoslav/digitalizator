@@ -29,7 +29,15 @@ jobs:
         shell: pwsh
         run: |
           pack/python/python.exe -m pip install --no-warn-script-location torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pack/python/python.exe -m pip install --no-warn-script-location "numpy~=1.24.2" opencv-python-headless safe-gpu numba lxml shapely scipy arabic-reshaper scikit-image scikit-learn
+          pack/python/python.exe -m pip install --no-warn-script-location "numpy~=1.24.2" opencv-python-headless numba lxml shapely scipy arabic-reshaper scikit-image scikit-learn
+
+      - name: Náhrada za safe_gpu (pôvodná používa Unix-ový modul fcntl; na CPU sa nevolá)
+        shell: pwsh
+        run: |
+          $d = "pack/python/Lib/site-packages/safe_gpu"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          "from . import safe_gpu" | Set-Content "$d/__init__.py"
+          "def claim_gpus(*args, **kwargs):`n    raise RuntimeError('GPU nie je v tomto balíku podporované')`n" | Set-Content "$d/safe_gpu.py"
 
       - name: PERO kód a modely
         shell: pwsh
