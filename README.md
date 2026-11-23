@@ -4,7 +4,7 @@ DIY náhrada CZUR skenera pre archívy: Android telefón na stojane nad stolom s
 **medzerník** (alebo nožný pedál, ktorý posiela medzerník) odfotí stranu, fotky sa uložia do priečinka spisu (`0001.jpg`, `0002.jpg`, …)
 a jedným tlačidlom sa z nich urobí **PDF/A s OCR**. Všetko beží lokálne, nič sa nikam neposiela.
 
-Stav: **MVP (v0.1)**, vyvíjané na Linuxe (Fedora). Windows balík zatiaľ nie je. Telefónna časť je v repe
+Stav: **MVP (v0.1)**, vyvíjané na Linuxe (Fedora). Windows inštalátor je v Releases. Telefónna časť je v repe
 [digitalizator-android](https://github.com/Rudoslav/digitalizator-android).
 
 ## Čo vie
@@ -13,6 +13,9 @@ Stav: **MVP (v0.1)**, vyvíjané na Linuxe (Fedora). Windows balík zatiaľ nie 
 - zoznam strán, klik = pozastaví náhľad a ukáže stranu, **Delete** ju zmaže (aj z disku), **Pokračovať** vráti náhľad
 - PDF/A s textovou vrstvou: OCR cez **PERO** (predvolené) alebo **Tesseract**, ukazovateľ priebehu
 - **F11** celá obrazovka, **Ctrl + šípky / Ctrl +/−** doladenie rámu (ukladá sa do `~/.config/digitalizator/frame.json`)
+
+## Inštalácia (Windows)
+Stiahni inštalátor z [Releases](https://github.com/Rudoslav/digitalizator/releases) a spusti ho; PERO OCR si stiahne sám. Potom nainštaluj APK do telefónu (pozri nižšie, bod 3).
 
 ## Inštalácia (Linux)
 1. Programy: `sudo dnf install tesseract tesseract-langpack-{slk,ces,deu,hun} ghostscript android-tools`
