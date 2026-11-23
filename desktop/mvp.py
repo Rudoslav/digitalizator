@@ -134,6 +134,8 @@ class PeroInstall(QThread):
 def install_pero(gui: bool = True) -> int:
     """`--install-pero`: stiahne a rozbalí PERO OCR. Bez `--silent` ukáže okno s priebehom."""
     import pero_pack
+    if "--force" not in sys.argv and pipeline.pero_available():
+        return 0  # už je nainštalované (napr. pri aktualizácii appky), nesťahuje sa znova
     if not gui:
         try:
             pero_pack.install(lambda s, d, t: print(f"{s} {d}/{t}", file=sys.stderr) if d == t else None)

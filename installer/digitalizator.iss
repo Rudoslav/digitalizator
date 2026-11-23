@@ -27,7 +27,7 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Doinštalovať PERO OCR"; Filename: "{app}\Digitalizator.exe"; Parameters: "--install-pero"
+Name: "{autoprograms}\Doinštalovať PERO OCR"; Filename: "{app}\Digitalizator.exe"; Parameters: "--install-pero --force"
 Name: "{autoprograms}\Digitalizátor"; Filename: "{app}\Digitalizator.exe"
 Name: "{autodesktop}\Digitalizátor"; Filename: "{app}\Digitalizator.exe"
 
