@@ -16,7 +16,7 @@ import tools
 from PIL import Image, ImageOps
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QMenu, QMessageBox, QProgressBar, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
 
 PORT = 8765
@@ -104,13 +104,13 @@ class PdfJob(QThread):
     failed = Signal(str)
     progress = Signal(int)
 
-    def __init__(self, images, out, engine):
+    def __init__(self, images, out, engine, txt_dir=None):
         super().__init__()
-        self.images, self.out, self.engine = images, out, engine
+        self.images, self.out, self.engine, self.txt_dir = images, out, engine, txt_dir
 
     def run(self):
         try:
-            used = pipeline.build_pdf(self.images, self.out, engine=self.engine,
+            used = pipeline.build_pdf(self.images, self.out, engine=self.engine, txt_dir=self.txt_dir,
                                       progress=lambda d, t: self.progress.emit(int(100 * d / t)))
             self.done.emit(f"{self.out}  (OCR: {used})")
         except Exception as e:  # noqa: BLE001
@@ -198,16 +198,19 @@ class Shot(QThread):
             self.failed.emit(str(e))
 
 
+PHOTOS, OCR_DIR = "fotky", "ocr"  # štruktúra spisu: spis-1/fotky, spis-1/ocr, spis-1/spis-1.pdf
+
+
 def next_number(folder: Path) -> int:
-    nums = [int(m.group(1)) for p in folder.glob("*.jpg") if (m := re.fullmatch(r"(\d+)", p.stem))]
+    """Ďalšie číslo fotky podľa súborov v podpriečinku fotky/."""
+    nums = [int(m.group(1)) for p in (folder / PHOTOS).glob("*.jpg") if (m := re.fullmatch(r"(\d+)", p.stem))]
     return max(nums, default=0) + 1
 
 
 class Window(QWidget):
     def __init__(self, folder: Path):
         super().__init__()
-        self.setWindowTitle(f"Digitalizátor – {folder.name}")
-        self.folder, self.n, self.busy = folder, next_number(folder), False
+        self.folder, self.n, self.busy = folder, 1, False
         self.view = QLabel("Čakám na telefón…")
         self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.view.setMinimumSize(640, 480)
@@ -219,24 +222,23 @@ class Window(QWidget):
         self.pages.setFixedWidth(200)
         self.pages.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # nech medzerník ide vždy do okna
         self.pages.itemClicked.connect(self.show_page)
-        for p in sorted(folder.glob("*.jpg")):
-            self.add_thumb(p)
 
         self.paused, self.shown, self.shown_item = False, None, None
         self.btn_resume = self.top_button("Pokračovať", self.resume)
         self.btn_resume.setStyleSheet("font-size:20px;padding:10px 24px;background:#2e7d32;color:white;")
         self.btn_resume.hide()
-        self.btn_full = self.top_button("Celá obrazovka (F11)", self.toggle_fullscreen)
+        self.btn_spisy = self.menu_button("Spisy", [("Otvoriť spis…", self.open_spis), ("Nový spis…", self.new_spis)])
+        self.btn_data = self.menu_button("Dáta", [("Spojiť do PDF", self.make_pdf)])
         self.cfg, self.mode = load_frame_cfg(), "A4"
         self.mode_btns = {m: self.top_button(label, lambda _=False, m=m: self.set_mode(m))
                           for m, label in (("A4", "Rám A4"), ("A3", "Rám A3"), (None, "Bez rámu"))}
         self.set_mode(self.mode)
         top = QHBoxLayout()
+        top.addWidget(self.btn_spisy)
+        top.addWidget(self.btn_data)
         for b in self.mode_btns.values():
             top.addWidget(b)
         top.addStretch(1)
-        self.btn_pdf = self.top_button("Vytvoriť PDF", self.make_pdf)
-        self.btn_pdf.setStyleSheet("font-size:18px;padding:10px 20px;background:#6a1b9a;color:white;")
         self.pdf_job = None
         self.engine = QComboBox()
         self.engine.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # medzerník nesmie meniť výber
@@ -250,9 +252,7 @@ class Window(QWidget):
         self.chk_crop.setStyleSheet("font-size:16px;")
         self.chk_crop.setChecked(True)
         top.addWidget(self.chk_crop)
-        top.addWidget(self.btn_pdf)
         top.addWidget(self.btn_resume)
-        top.addWidget(self.btn_full)
 
         right = QVBoxLayout()
         right.addLayout(top)
@@ -266,11 +266,51 @@ class Window(QWidget):
         lay = QHBoxLayout(self)
         lay.addWidget(self.pages)
         lay.addLayout(right, 1)
-        self.say()
+        self.set_spis(folder)
         self.feed = Feed()
         self.feed.frame.connect(self.on_frame)
         self.feed.lost.connect(lambda: self.view.setText("Čakám na telefón…"))
         self.feed.start()
+
+    def set_spis(self, folder: Path):
+        """Prepne appku na spis: vytvorí podpriečinok fotky/ a načíta existujúce fotky."""
+        self.folder = folder
+        (folder / PHOTOS).mkdir(parents=True, exist_ok=True)
+        self.setWindowTitle(f"Digitalizátor – {folder.name}")
+        self.pages.clear()
+        self.paused, self.shown, self.shown_item = False, None, None
+        self.btn_resume.hide()
+        for p in sorted((folder / PHOTOS).glob("*.jpg")):
+            self.add_thumb(p)
+        self.n = next_number(folder)
+        self.say(f"Spis: {folder}")
+
+    def _pick_spis(self, title: str):
+        if self.busy or self.pdf_job is not None:
+            self.say("Počkajte, kým sa dokončí fotenie alebo PDF.")
+            return
+        folder = QFileDialog.getExistingDirectory(self, title, str(self.folder.parent))
+        if folder:
+            self.set_spis(Path(folder))
+
+    def open_spis(self):
+        self._pick_spis("Otvoriť spis – vyberte priečinok spisu")
+
+    def new_spis(self):
+        self._pick_spis("Nový spis – vyberte alebo vytvorte priečinok")
+
+    def menu_button(self, text, actions):
+        b = QToolButton()
+        b.setText(text + " ▾")
+        b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setStyleSheet("QToolButton{font-size:16px;padding:10px 16px;} QToolButton::menu-indicator{image:none;}")
+        menu = QMenu(b)
+        menu.setStyleSheet("QMenu{font-size:16px;} QMenu::item{padding:8px 24px;}")
+        for label, slot in actions:
+            menu.addAction(label, slot)
+        b.setMenu(menu)
+        return b
 
     def add_thumb(self, path: Path):
         r = QImageReader(str(path))
@@ -368,18 +408,18 @@ class Window(QWidget):
         self.say()
 
     def make_pdf(self):
-        """Zloží všetky fotky v priečinku spisu (podľa čísla) do <spis>.pdf a spraví OCR."""
-        images = sorted(self.folder.glob("[0-9]*.jpg"))
+        """Dáta → Spojiť do PDF: zo všetkých fotiek spraví spis.pdf a do ocr/ text každej strany."""
+        images = sorted((self.folder / PHOTOS).glob("[0-9]*.jpg"))
         if not images:
             self.say("Najprv odfoťte aspoň jednu stranu.")
             return
         if self.pdf_job is not None:
             return
-        out = self.folder / f"{self.folder.name}.pdf"
-        self.btn_pdf.setEnabled(False)
+        out = self.folder / f"{self.folder.name}.pdf"  # PDF sa volá podľa priečinka spisu
+        self.btn_data.setEnabled(False)
         self.say(f"Vytváram PDF z {len(images)} strán a rozpoznávam text… môže to trvať.")
         self.pdf_msg = "PDF sa nepodarilo vytvoriť."
-        self.pdf_job = PdfJob(images, out, self.engine.currentData())
+        self.pdf_job = PdfJob(images, out, self.engine.currentData(), self.folder / OCR_DIR)
         self.engine.setEnabled(False)
         self.pdf_job.done.connect(lambda p: setattr(self, "pdf_msg", f"Hotovo: {p}"))
         self.pdf_job.failed.connect(lambda m: setattr(self, "pdf_msg", f"PDF sa nepodarilo vytvoriť: {m}"))
@@ -394,7 +434,7 @@ class Window(QWidget):
         self.pdf_job = None
         self.bar.hide()
         self.engine.setEnabled(True)
-        self.btn_pdf.setEnabled(True)
+        self.btn_data.setEnabled(True)
         self.say(self.pdf_msg)
 
     def toggle_fullscreen(self):
@@ -435,13 +475,13 @@ class Window(QWidget):
             self.busy = True
             self.say("Fotím…")
             crop = (dict(self.cfg), self.mode) if self.chk_crop.isChecked() and self.mode else None
-            self.shot = Shot(self.folder / f"{self.n:04d}.jpg", crop)
+            self.shot = Shot(self.folder / PHOTOS / f"{self.n:04d}.jpg", crop)
             self.shot.done.connect(self.shot_ok)
             self.shot.failed.connect(self.shot_fail)
             self.shot.start()
 
     def shot_ok(self, name):
-        self.add_thumb(self.folder / name)
+        self.add_thumb(self.folder / PHOTOS / name)
         self.n += 1
         self.busy = False
         self.say(f"Uložené: {name}" + (" (orezané podľa rámu)" if self.chk_crop.isChecked() and self.mode else ""))
@@ -480,8 +520,9 @@ def selftest(report: Path, require_pero: bool = False) -> int:
             src = Path(d) / "0001.jpg"
             img.save(src, quality=95)
             out = Path(d) / "t.pdf"
-            used = pipeline.build_pdf([src], out, engine="tesseract")
+            used = pipeline.build_pdf([src], out, engine="tesseract", txt_dir=Path(d) / "ocr")
             check("pdf", out.exists() and out.stat().st_size > 0, used)
+            check("ocr txt", (Path(d) / "ocr" / "0001.txt").exists())
             check("pdf/a", "PDF/A" in used and "bez PDF/A" not in used, used)
             if require_pero:
                 used = pipeline.build_pdf([src], Path(d) / "p.pdf", engine="pero")

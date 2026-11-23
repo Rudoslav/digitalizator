@@ -52,7 +52,7 @@ def _raw_pdf(images: list[Path]) -> bytes:
 
 
 def _build_text_pdf(images: list[Path], out_pdf: Path, ocr: bool = True, engine: str = "auto",
-              langs: str = OCR_LANGS, progress=None) -> str:
+              langs: str = OCR_LANGS, progress=None, txt_dir=None) -> str:
     """Zloží obrázky (v danom poradí) do jedného PDF; JPEG sa vkladá bez rekompresie.
     engine: "auto" (PERO ak je k dispozícii, inak Tesseract), "pero", "tesseract".
     progress(hotové, spolu) sa volá po dokončení každej strany. Vráti popis použitého OCR."""
@@ -66,17 +66,17 @@ def _build_text_pdf(images: list[Path], out_pdf: Path, ocr: bool = True, engine:
         engine = "pero" if pero_available() else "tesseract"
     if engine == "pero":
         try:
-            _build_pero(images, out_pdf, progress)
+            _build_pero(images, out_pdf, progress, txt_dir)
             return "PERO"
         except Exception as e:  # noqa: BLE001 - záloha: Tesseract
-            _build_tesseract(images, out_pdf, langs, progress)
+            _build_tesseract(images, out_pdf, langs, progress, txt_dir)
             return f"Tesseract (PERO zlyhal: {str(e)[:120]})"
-    _build_tesseract(images, out_pdf, langs, progress)
+    _build_tesseract(images, out_pdf, langs, progress, txt_dir)
     return "Tesseract"
 
 
 # ---------------------------------------------------------------- PERO
-def _build_pero(images: list[Path], out_pdf: Path, progress) -> None:
+def _build_pero(images: list[Path], out_pdf: Path, progress, txt_dir=None) -> None:
     paths = _pero_paths()
     if paths is None:
         raise RuntimeError("PERO nie je nainštalovaný.")
@@ -112,11 +112,15 @@ def _build_pero(images: list[Path], out_pdf: Path, progress) -> None:
         missing = [i + 1 for i, a in altos.items() if not a.exists()]
         if missing:
             raise RuntimeError(f"PERO nevytvoril výstup pre strany {missing}.")
-        _overlay(images, altos, out_pdf)
+        _overlay(images, altos, out_pdf, txt_dir)
 
 
-def _overlay(images: list[Path], altos: dict[int, Path], out_pdf: Path) -> None:
+def _overlay(images: list[Path], altos: dict[int, Path], out_pdf: Path, txt_dir=None) -> None:
     """Pôvodné strany (obrázky) + neviditeľná textová vrstva z ALTO XML (spoločné pre PERO aj Tesseract)."""
+    if txt_dir is not None:  # rozpoznaný text každej strany do vlastného .txt (rovnaký názov ako fotka)
+        txt_dir.mkdir(parents=True, exist_ok=True)
+        for i, img in enumerate(images):
+            (txt_dir / f"{img.stem}.txt").write_text(_alto_text(altos[i]), encoding="utf-8")
     raw = pikepdf.open(io.BytesIO(_raw_pdf(images)))
     keep = []
     for i in range(len(images)):
@@ -129,6 +133,19 @@ def _overlay(images: list[Path], altos: dict[int, Path], out_pdf: Path) -> None:
     raw.close()
     for k in keep:
         k.close()
+
+
+def _alto_text(alto: Path) -> str:
+    """Čistý text strany z ALTO XML: jeden riadok textu na riadok súboru."""
+    root = ET.parse(alto).getroot()
+    lines = []
+    for tl in root.iter():
+        if tl.tag.endswith("}TextLine") or tl.tag == "TextLine":
+            words = [e.attrib.get("CONTENT", "") for e in tl if e.tag.endswith("}String") or e.tag == "String"]
+            line = " ".join(w for w in words if w.strip())
+            if line:
+                lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def _text_layer(alto: Path, w_pt: float, h_pt: float) -> bytes:
@@ -159,7 +176,7 @@ def _text_layer(alto: Path, w_pt: float, h_pt: float) -> bytes:
 
 
 # ------------------------------------------------------------ Tesseract
-def _build_tesseract(images: list[Path], out_pdf: Path, langs: str, progress) -> None:
+def _build_tesseract(images: list[Path], out_pdf: Path, langs: str, progress, txt_dir=None) -> None:
     """Tesseract vráti ALTO XML (rovnaký formát ako PERO), textovú vrstvu skladáme rovnako."""
     total = len(images)
     workers = max(1, min(total, (os.cpu_count() or 2) // 2))
@@ -186,7 +203,7 @@ def _build_tesseract(images: list[Path], out_pdf: Path, langs: str, progress) ->
                 done += 1
                 if progress:
                     progress(done, total)
-        _overlay(images, altos, out_pdf)
+        _overlay(images, altos, out_pdf, txt_dir)
 
 
 # -------------------------------------------------------------- PDF/A
@@ -241,7 +258,7 @@ def _to_pdfa(pdf: Path) -> str:
 
 
 def build_pdf(images: list[Path], out_pdf: Path, ocr: bool = True, engine: str = "auto",
-              langs: str = OCR_LANGS, progress=None) -> str:
-    """Vytvorí PDF/A s textovou vrstvou (OCR). Vráti popis: použitý engine a PDF/A."""
-    used = _build_text_pdf(images, out_pdf, ocr, engine, langs, progress)
+              langs: str = OCR_LANGS, progress=None, txt_dir=None) -> str:
+    """Vytvorí PDF/A s textovou vrstvou (OCR). Ak je txt_dir, uloží aj text každej strany do <názov fotky>.txt. Vráti popis: engine a PDF/A."""
+    used = _build_text_pdf(images, out_pdf, ocr, engine, langs, progress, txt_dir)
     return f"{used}, {_to_pdfa(out_pdf)}"
