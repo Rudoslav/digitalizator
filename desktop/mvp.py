@@ -15,7 +15,7 @@ import pipeline
 import tools
 from PIL import Image, ImageOps
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMenu, QMessageBox, QProgressBar, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -200,6 +200,43 @@ class Shot(QThread):
             self.failed.emit(str(e))
 
 
+STYLE = """
+* { font-family: 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif; font-size: 14px; color: #1f2933; }
+QWidget#root { background: #f3f4f6; }
+QFrame#sidebar { background: #ffffff; border: 1px solid #dfe3e8; border-radius: 12px; }
+QLabel#spisTitle { font-size: 16px; font-weight: 600; }
+QLabel#spisCount { color: #6b7785; padding-bottom: 6px; }
+QLabel#muted { color: #6b7785; }
+QListWidget#pages { background: transparent; border: none; outline: none; }
+QListWidget#pages::item { border-radius: 8px; padding: 6px; margin: 2px 2px; color: #52606d; }
+QListWidget#pages::item:selected { background: #dbeafe; color: #1e3a8a; }
+QListWidget#pages::item:hover:!selected { background: #f1f5f9; }
+QLabel#preview { background: #151a21; border-radius: 12px; color: #9aa5b1; font-size: 18px; }
+QLabel#status { color: #52606d; padding: 2px 4px; }
+QPushButton, QToolButton, QComboBox { background: #ffffff; border: 1px solid #cfd6de; border-radius: 8px; padding: 8px 14px; }
+QPushButton:hover, QToolButton:hover, QComboBox:hover { background: #f1f5f9; }
+QToolButton::menu-indicator { image: none; width: 0px; }
+QComboBox::drop-down { border: none; width: 22px; }
+QPushButton[seg] { border-radius: 0px; border-right-width: 0px; padding: 8px 16px; }
+QPushButton[seg="first"] { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+QPushButton[seg="last"] { border-top-right-radius: 8px; border-bottom-right-radius: 8px; border-right-width: 1px; }
+QPushButton[seg]:checked { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+QPushButton#primary { background: #16a34a; border-color: #16a34a; color: #ffffff; font-weight: 600; padding: 8px 22px; }
+QPushButton#primary:hover { background: #15803d; }
+QCheckBox { spacing: 8px; }
+QProgressBar { border: none; background: #e5e9ef; border-radius: 6px; min-height: 12px; max-height: 12px; text-align: center; font-size: 1px; color: transparent; }
+QProgressBar::chunk { background: #2563eb; border-radius: 6px; }
+QMenu { background: #ffffff; border: 1px solid #cfd6de; border-radius: 8px; padding: 6px; }
+QMenu::item { padding: 8px 26px; border-radius: 6px; }
+QMenu::item:selected { background: #dbeafe; color: #1e3a8a; }
+QMessageBox { background: #ffffff; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: #c3cad3; border-radius: 4px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: #9aa5b1; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+"""
+
 PHOTOS, OCR_DIR = "fotky", "ocr"  # štruktúra spisu: spis-1/fotky, spis-1/ocr, spis-1/spis-1.pdf
 
 
@@ -216,57 +253,98 @@ class Window(QWidget):
         self.view = QLabel("Čakám na telefón…")
         self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.view.setMinimumSize(640, 480)
-        self.view.setStyleSheet("background:#222;color:#ccc;font-size:22px;")
+        self.view.setObjectName("preview")
+        self.setObjectName("root")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(STYLE)
         self.status = QLabel()
-        self.status.setStyleSheet("font-size:18px;padding:6px;")
+        self.status.setObjectName("status")
+        self.spis_title = QLabel()
+        self.spis_title.setObjectName("spisTitle")
+        self.spis_count = QLabel()
+        self.spis_count.setObjectName("spisCount")
         self.pages = QListWidget()
-        self.pages.setIconSize(QSize(150, 200))
-        self.pages.setFixedWidth(200)
+        self.pages.setObjectName("pages")
+        self.pages.setViewMode(QListWidget.ViewMode.IconMode)   # náhľad strany a pod ním číslo
+        self.pages.setFlow(QListWidget.Flow.TopToBottom)
+        self.pages.setWrapping(False)
+        self.pages.setMovement(QListWidget.Movement.Static)
+        self.pages.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.pages.setIconSize(QSize(140, 186))
+        self.pages.setGridSize(QSize(186, 236))
+        self.pages.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.pages.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.pages.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # nech medzerník ide vždy do okna
         self.pages.itemClicked.connect(self.show_page)
 
         self.paused, self.shown, self.shown_item = False, None, None
         self.btn_resume = self.top_button("Pokračovať", self.resume)
-        self.btn_resume.setStyleSheet("font-size:20px;padding:10px 24px;background:#2e7d32;color:white;")
+        self.btn_resume.setObjectName("primary")
         self.btn_resume.hide()
         self.btn_spisy = self.menu_button("Spisy", [("Otvoriť spis…", self.open_spis), ("Nový spis…", self.new_spis)])
         self.btn_data = self.menu_button("Dáta", [("Spojiť do PDF", self.make_pdf)])
         self.cfg, self.mode = load_frame_cfg(), "A4"
         self.mode_btns = {m: self.top_button(label, lambda _=False, m=m: self.set_mode(m))
-                          for m, label in (("A4", "Rám A4"), ("A3", "Rám A3"), (None, "Bez rámu"))}
+                          for m, label in (("A4", "A4"), ("A3", "A3"), (None, "Bez rámu"))}
+        for b, pos in zip(self.mode_btns.values(), ("first", "mid", "last")):
+            b.setCheckable(True)
+            b.setProperty("seg", pos)
         self.set_mode(self.mode)
         top = QHBoxLayout()
+        top.setSpacing(8)
         top.addWidget(self.btn_spisy)
         top.addWidget(self.btn_data)
+        top.addSpacing(14)
+        frame_lbl = QLabel("Rám")
+        frame_lbl.setObjectName("muted")
+        top.addWidget(frame_lbl)
+        seg = QHBoxLayout()
+        seg.setSpacing(0)
         for b in self.mode_btns.values():
-            top.addWidget(b)
+            seg.addWidget(b)
+        top.addLayout(seg)
         top.addStretch(1)
         self.pdf_job = None
         self.engine = QComboBox()
         self.engine.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # medzerník nesmie meniť výber
-        self.engine.setStyleSheet("font-size:16px;padding:8px;")
         if pipeline.pero_available():
             self.engine.addItem("OCR: PERO (odporúčané)", "pero")
         self.engine.addItem("OCR: Tesseract", "tesseract")
         top.addWidget(self.engine)
-        self.chk_crop = QCheckBox("Orezať pri fotení podľa rámu")
+        self.chk_crop = QCheckBox("Orezať podľa rámu")
         self.chk_crop.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.chk_crop.setStyleSheet("font-size:16px;")
         self.chk_crop.setChecked(True)
         top.addWidget(self.chk_crop)
         top.addWidget(self.btn_resume)
 
-        right = QVBoxLayout()
-        right.addLayout(top)
-        right.addWidget(self.view, 1)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
-        self.bar.setStyleSheet("font-size:16px;")
+        self.bar.setFixedWidth(260)
         self.bar.hide()
-        right.addWidget(self.bar)
-        right.addWidget(self.status)
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.status, 1)
+        bottom.addWidget(self.bar)
+
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        right.addLayout(top)
+        right.addWidget(self.view, 1)
+        right.addLayout(bottom)
+
+        side = QFrame()
+        side.setObjectName("sidebar")
+        side.setFixedWidth(230)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(12, 12, 12, 12)
+        sl.setSpacing(0)
+        sl.addWidget(self.spis_title)
+        sl.addWidget(self.spis_count)
+        sl.addWidget(self.pages, 1)
+
         lay = QHBoxLayout(self)
-        lay.addWidget(self.pages)
+        lay.setContentsMargins(14, 14, 14, 12)
+        lay.setSpacing(14)
+        lay.addWidget(side)
         lay.addLayout(right, 1)
         self.set_spis(folder)
         self.feed = Feed()
@@ -285,7 +363,16 @@ class Window(QWidget):
         for p in sorted((folder / PHOTOS).glob("*.jpg")):
             self.add_thumb(p)
         self.n = next_number(folder)
-        self.say(f"Spis: {folder}")
+        self.update_header()
+        self.say()
+
+    def update_header(self):
+        n = self.pages.count()
+        word = "strana" if n == 1 else "strany" if 2 <= n <= 4 else "strán"
+        name = self.spis_title.fontMetrics().elidedText(self.folder.name, Qt.TextElideMode.ElideMiddle, 190)
+        self.spis_title.setText(name)
+        self.spis_title.setToolTip(str(self.folder))
+        self.spis_count.setText(f"{n} {word}")
 
     def _pick_spis(self, title: str):
         if self.busy or self.pdf_job is not None:
@@ -306,9 +393,7 @@ class Window(QWidget):
         b.setText(text + " ▾")
         b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        b.setStyleSheet("QToolButton{font-size:16px;padding:10px 16px;} QToolButton::menu-indicator{image:none;}")
         menu = QMenu(b)
-        menu.setStyleSheet("QMenu{font-size:16px;} QMenu::item{padding:8px 24px;}")
         for label, slot in actions:
             menu.addAction(label, slot)
         b.setMenu(menu)
@@ -320,16 +405,22 @@ class Window(QWidget):
         size = r.size()
         if size.isValid():
             r.setScaledSize(size.scaled(300, 400, Qt.AspectRatioMode.KeepAspectRatio))
-        item = QListWidgetItem(QIcon(QPixmap.fromImage(r.read())), path.stem)
+        pm = QPixmap.fromImage(r.read())
+        pm = pm.scaled(280, 372, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        q = QPainter(pm)  # tenký okraj, aby bola vidieť aj biela strana na bielom paneli
+        q.setPen(QPen(QColor("#b8c0cc"), 2))
+        q.drawRect(0, 0, pm.width() - 1, pm.height() - 1)
+        q.end()
+        item = QListWidgetItem(QIcon(pm), path.stem)
         item.setData(Qt.ItemDataRole.UserRole, str(path))
         self.pages.addItem(item)
         self.pages.scrollToItem(item)
+        self.update_header()
 
     @staticmethod
     def top_button(text, slot):
         b = QPushButton(text)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # medzerník nesmie stláčať tlačidlá
-        b.setStyleSheet("font-size:16px;padding:10px 16px;")
         b.clicked.connect(slot)
         return b
 
@@ -344,16 +435,21 @@ class Window(QWidget):
             h = w * A_RATIO
             r = QRectF(self.cfg["cx"] * pm.width() - w / 2, self.cfg["cy"] * pm.height() - h / 2, w, h)
             p.drawRect(r)
-            p.drawText(QPointF(r.left() + 6, r.top() + 22), self.mode)
+            tag = QRectF(r.left(), r.top(), 46, 24)  # popis rámu na zelenom podklade
+            p.fillRect(tag, QColor("#00e676"))
+            p.setPen(QColor("#06361b"))
+            f = p.font()
+            f.setBold(True)
+            f.setPointSize(11)
+            p.setFont(f)
+            p.drawText(tag, Qt.AlignmentFlag.AlignCenter, self.mode)
             p.end()
         self.view.setPixmap(pm)
 
     def set_mode(self, mode):
         self.mode = mode
         for m, b in self.mode_btns.items():
-            on = m == mode
-            b.setStyleSheet("font-size:16px;padding:10px 16px;" +
-                            ("background:#1565c0;color:white;" if on else ""))
+            b.setChecked(m == mode)
 
     def tune_frame(self, dx=0.0, dy=0.0, dw=0.0):
         """Ctrl+šípky = posun rámu, Ctrl +/- = veľkosť (nastavenie robí admin, ukladá sa)."""
@@ -398,6 +494,7 @@ class Window(QWidget):
             self.say(f"Fotku sa nepodarilo zmazať: {e}")
             return
         self.pages.takeItem(self.pages.row(item))
+        self.update_header()
         self.n = next_number(self.folder)  # číslovanie nadväzuje na najvyššie existujúce
         self.resume()
         self.say(f"Zmazané: {path.name}")
@@ -451,7 +548,7 @@ class Window(QWidget):
             self.show_pixmap(self.shown)
 
     def say(self, extra=""):
-        self.status.setText(f"Medzerník = odfotiť.  Ďalšia strana: {self.n}.  {extra}")
+        self.status.setText(f"Ďalšia strana: {self.n}   ·   Medzerník = odfotiť" + (f"   ·   {extra}" if extra else ""))
 
     def on_frame(self, img: QImage):
         if not self.paused:
